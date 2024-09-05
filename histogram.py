@@ -33,6 +33,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 import soundfile as sf
 from pathlib import Path
+from itertools import chain
 from concurrent.futures import ThreadPoolExecutor
 
 def regex_type(value):
@@ -67,7 +68,7 @@ def main():
         matplotlib.use("agg")
    
     if not args.window and args.recursive and args.input.is_dir():
-        paths = [args.input] + [p for p in args.input.rglob("*") if p.is_dir()]
+        paths = chain([args.input], args.input.rglob("*/"))
         with ThreadPoolExecutor(max_workers=args.concurrency) as executor:
             executor.map(lambda path : create_histogram(path, args), paths)
     else:
@@ -80,9 +81,9 @@ def create_histogram(path, args):
     if not args.window and not args.overwrite and output_path.exists():
         return
 
-    files = [path] if path.is_file() else [
+    files = [path] if path.is_file() else (
         file for file in path.glob("*") if file.is_file() and re.search(args.match, file.name)
-    ]
+    )
 
     if not files:
         return
