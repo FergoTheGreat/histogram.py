@@ -34,6 +34,7 @@ import matplotlib.pyplot as plt
 import soundfile as sf
 from pathlib import Path
 from itertools import chain
+from collections import namedtuple
 from concurrent.futures import ThreadPoolExecutor
 
 def regex_type(value):
@@ -52,23 +53,23 @@ def main():
     parser.add_argument("-r", "--recursive", action="store_true", help="Recursively process directories")
     parser.add_argument("-c", "--concurrency", nargs="?", type=int, default=1, help="Set the maximum number of threads (default: 1)")
     parser.add_argument("-s", "--size", type=float, nargs=2, default=[10.24, 6.4], help="Output image size in inches", metavar=("WIDTH", "HEIGHT"))
-    parser.add_argument("--dpi", type=int, nargs="?", default=100, help="DPI for the output image (default: 100)")
+    parser.add_argument("--dpi", type=float, nargs="?", default=100, help="DPI for the output image (default: 100)")
     parser.add_argument("-m", "--match", type=regex_type, nargs="?", default=r"(?i)\.flac$", help="Regular expression to match files (default: \"(?i)\\.flac$\")")
     parser.add_argument("-w", "--window", action="store_true", help="Display the histogram in a window instead of saving to a file (will ignore --recursive)")
     parser.add_argument("-o", "--overwrite", action="store_true", help="Overwrite existing image files")
     args = parser.parse_args()
 
     if not args.input.exists():
-        raise argparse.ArgumentTypeError(f"No file or directory named \"{args.input}\".")
+        raise argparse.ArgumentTypeError(f"No file or directory named \"{args.input}\"")
 
-    if any(d <= 0 for d in args.size):
-        raise argparse.ArgumentTypeError("Size dimensions must be positive integers.")
+    if any(n <= 0 for n in args.size + [args.dpi]):
+        raise argparse.ArgumentTypeError("Size dimensions and DPI must be real numbers > 0")
 
     if not args.window:
         matplotlib.use("agg")
    
     if not args.window and args.recursive and args.input.is_dir():
-        paths = chain([args.input], args.input.rglob("*/"))
+        paths = chain((args.input,), args.input.rglob("*/"))
         with ThreadPoolExecutor(max_workers=args.concurrency) as executor:
             executor.map(lambda path : create_histogram(path, args), paths)
     else:
@@ -81,15 +82,18 @@ def create_histogram(path, args):
     if not args.window and not args.overwrite and output_path.exists():
         return
 
-    files = [path] if path.is_file() else (
+    files = (path,) if path.is_file() else tuple(
         file for file in path.glob("*") if file.is_file() and re.search(args.match, file.name)
     )
 
-    if not files:
+    if len(files) == 0:
         return
 
-    tracks, length, peak, rms, samples = decode(files)
-    hist, bin_edges = np.histogram(samples, bins=1000, range=(-1, 1))
+    try:
+        info = get_audio_info(files)
+    except Exception as error:
+        print(f"Failed to process {title}: {error}", file=sys.stderr)
+        return
 
     plt.rcParams.update({
         "lines.color": "white",
@@ -107,7 +111,7 @@ def create_histogram(path, args):
         "savefig.edgecolor": "black"})
 
     fig, ax = plt.subplots(figsize=args.size)
-    ax.plot(bin_edges[:-1], hist, color="red", linewidth=1)
+    ax.plot(info.histogram.edges[:-1], info.histogram.bins, color="red", linewidth=1)
     ax.grid(True, which="both", linestyle="--", linewidth=0.5)
     ax.set_yscale("log")
     ax.set_yticks(np.logspace(0, 8, 9))
@@ -115,8 +119,8 @@ def create_histogram(path, args):
     ax.set_ylabel("Number of Samples")
     ax.set_xlabel("Sample Value")
     ax.set_title(title, wrap=True, pad=15)
-    fig.text(0.01, 0.01, f"Tracks: {tracks}, Length: {fmt_length(length)}", va="bottom", ha="left")
-    fig.text(0.99, 0.01, f"Peak: {peak:.2f} dB FS, RMS(Sine): {rms:.2f} dB FS", va="bottom", ha="right")
+    fig.text(0.01, 0.01, f"Tracks: {info.tracks}, Length: {fmt_length(info.length)}", va="bottom", ha="left")
+    fig.text(0.99, 0.01, f"Peak: {info.peak:.2f} dB FS, RMS(Sine): {info.rms:.2f} dB FS", va="bottom", ha="right")
 
     if args.window:
         plt.show()
@@ -126,18 +130,40 @@ def create_histogram(path, args):
 
     plt.close(fig)
 
-def decode(files):
-    length = 0.0
-    sample_arrays = []
+AudioInfo = namedtuple("AudioInfo", ["tracks", "length", "peak", "rms", "histogram"])
+Histogram = namedtuple("Histogram", ["bins", "edges"])
+
+def get_audio_info(files):
+    total_tracks = 0
+    total_samples = 0
+    total_length = 0.0
+    max_peak = 0.0
+    squared_sum = 0.0
+
+    hist_accumulator = np.zeros(1000)
+    bin_edges = np.linspace(-1, 1, len(hist_accumulator) + 1)
+
     for file in files:
         samples, samplerate = sf.read(file)
-        length += len(samples) / samplerate
-        sample_arrays.append(samples.flatten() if samples.ndim > 1 else samples)
-    tracks = len(sample_arrays)
-    samples = np.clip(np.concatenate(sample_arrays), -1, 1)
-    peak = db(np.max(np.abs(samples)))
-    rms = db(np.sqrt(np.mean(samples ** 2)) * np.sqrt(2))
-    return tracks, length, peak, rms, samples
+        total_tracks += 1
+        total_length += len(samples) / samplerate
+        samples = np.clip(samples.ravel(), -1, 1)
+        total_samples += len(samples)
+        max_peak = max(max_peak, np.max(np.abs(samples)))
+        squared_sum += np.sum(samples ** 2)
+        hist, _ = np.histogram(samples, bins=bin_edges)
+        hist_accumulator += hist
+
+    if total_samples == 0:
+        raise RuntimeError("Decoding produced no audio to process")
+
+    return AudioInfo(
+        tracks = total_tracks,
+        length = total_length,
+        peak = db(max_peak),
+        rms = db(np.sqrt(squared_sum / total_samples) * np.sqrt(2)),
+        histogram = Histogram(bins=hist_accumulator, edges=bin_edges)
+    )
 
 def fmt_length(seconds):
     hours, seconds = divmod(round(seconds), 3600)
