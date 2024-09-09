@@ -27,6 +27,7 @@
 
 import sys
 import re
+import math
 import argparse
 import numpy as np
 import matplotlib
@@ -44,7 +45,7 @@ def regex_type(value):
         raise argparse.ArgumentTypeError(f"Invalid regular expression: {e}")
 
 def db(value):
-    return 20 * np.log10(value) if value > 0 else -np.inf
+    return 20 * math.log10(value) if value > 0 else -math.inf
 
 def main():
     parser = argparse.ArgumentParser(description="Generate histograms from audio files")
@@ -161,7 +162,7 @@ def get_audio_info(files):
         tracks = total_tracks,
         length = total_length,
         peak = db(max_peak),
-        rms = db(np.sqrt(squared_sum / total_samples) * np.sqrt(2)),
+        rms = db(math.sqrt(squared_sum / total_samples) * math.sqrt(2)),
         histogram = Histogram(bins=hist_accumulator, edges=bin_edges)
     )
 
