@@ -35,7 +35,7 @@ import matplotlib.pyplot as plt
 import soundfile as sf
 from pathlib import Path
 from itertools import chain
-from collections import namedtuple
+from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor
 
 def regex_type(value):
@@ -131,8 +131,18 @@ def create_histogram(path, args):
 
     plt.close(fig)
 
-AudioInfo = namedtuple("AudioInfo", ["tracks", "length", "peak", "rms", "histogram"])
-Histogram = namedtuple("Histogram", ["bins", "edges"])
+@dataclass
+class Histogram:
+    bins: np.ndarray
+    edges: np.ndarray
+
+@dataclass
+class AudioInfo:
+    tracks: int
+    length: float
+    peak: float
+    rms: float
+    histogram: Histogram
 
 def get_audio_info(files):
     total_tracks = 0
