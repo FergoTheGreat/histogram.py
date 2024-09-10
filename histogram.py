@@ -131,12 +131,12 @@ def create_histogram(path, args):
 
     plt.close(fig)
 
-@dataclass
+@dataclass(frozen=True)
 class Histogram:
     bins: np.ndarray
     edges: np.ndarray
 
-@dataclass
+@dataclass(frozen=True)
 class AudioInfo:
     tracks: int
     length: float
